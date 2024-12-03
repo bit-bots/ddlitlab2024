@@ -1,0 +1,26 @@
+name: Run pytest unit tests
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  unit-tests:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, ubuntu-22.04]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup repository
+        uses: ./.github/actions/setup-repo
+
+      - name: Run pytest unit tests
+        run: poetry run pytest tests

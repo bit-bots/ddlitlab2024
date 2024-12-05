@@ -3,7 +3,7 @@ from enum import Enum
 from typing import Optional
 
 import numpy as np
-from sqlalchemy import Boolean, CheckConstraint, DateTime, Float, ForeignKey, Integer, String
+from sqlalchemy import Boolean, CheckConstraint, DateTime, Float, ForeignKey, Index, Integer, String, asc
 from sqlalchemy.orm import Mapped, declarative_base, mapped_column, relationship
 from sqlalchemy.types import LargeBinary
 
@@ -20,7 +20,11 @@ class RobotState(str, Enum):
 
     @classmethod
     def values(cls):
-        return [e.value for e in cls]
+        return sorted([e.value for e in cls])
+
+    def __int__(self):
+        # Use index of sorted strings
+        return self.values().index(self.value)
 
 
 class TeamColor(str, Enum):
@@ -93,7 +97,11 @@ class Image(Base):
 
     recording: Mapped["Recording"] = relationship("Recording", back_populates="images")
 
-    __table_args__ = (CheckConstraint("stamp >= 0"),)
+    __table_args__ = (
+        CheckConstraint("stamp >= 0"),
+        # Index to retrieve images in order from a given recording
+        Index("idx_recording_stamp_image", "recording_id", asc("stamp")),
+    )
 
     def __init__(
         self, stamp: float, image: np.ndarray, recording_id: int | None = None, recording: Recording | None = None
@@ -128,6 +136,8 @@ class Rotation(Base):
         CheckConstraint("y >= -1 AND y <= 1"),
         CheckConstraint("z >= -1 AND z <= 1"),
         CheckConstraint("w >= -1 AND w <= 1"),
+        # Index to retrieve rotations in order from a given recording
+        Index("idx_recording_stamp_rotation", "recording_id", asc("stamp")),
     )
 
 
@@ -182,6 +192,8 @@ class JointStates(Base):
         CheckConstraint("LAnkleRoll >= 0 AND LAnkleRoll < 2 * pi()"),
         CheckConstraint("HeadPan >= 0 AND HeadPan < 2 * pi()"),
         CheckConstraint("HeadTilt >= 0 AND HeadTilt < 2 * pi()"),
+        # Index to retrieve joint states in order from a given recording
+        Index("idx_recording_stamp_joint_state", "recording_id", asc("stamp")),
     )
 
 
@@ -236,6 +248,8 @@ class JointCommands(Base):
         CheckConstraint("LAnkleRoll >= 0 AND LAnkleRoll < 2 * pi()"),
         CheckConstraint("HeadPan >= 0 AND HeadPan < 2 * pi()"),
         CheckConstraint("HeadTilt >= 0 AND HeadTilt < 2 * pi()"),
+        # Index to retrieve joint commands in order from a given recording
+        Index("idx_recording_stamp_joint_command", "recording_id", asc("stamp")),
     )
 
 
@@ -249,7 +263,11 @@ class GameState(Base):
 
     recording: Mapped["Recording"] = relationship("Recording", back_populates="game_states")
 
-    __table_args__ = (CheckConstraint(state.in_(RobotState.values())),)
+    __table_args__ = (
+        CheckConstraint(state.in_(RobotState.values())),
+        # Index to retrieve game states in order from a given recording
+        Index("idx_recording_stamp_game_state", "recording_id", asc("stamp")),
+    )
 
 
 def stamp_to_seconds_nanoseconds(stamp: float) -> tuple[int, int]:

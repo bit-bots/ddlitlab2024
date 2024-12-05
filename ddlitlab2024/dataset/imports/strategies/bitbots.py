@@ -77,8 +77,8 @@ class BitBotsImportStrategy(ImportStrategy):
                         last_messages_by_topic.joint_command = ros_msg
                         converter = self.synced_data_converter
                     case "/imu/data":
-                        # @TODO: implement imu conversion
-                        pass
+                        last_messages_by_topic.rotation = ros_msg
+                        converter = self.synced_data_converter
                     case "/tf":
                         # @TODO: implement imu data extraction from tf messages
                         pass
@@ -111,12 +111,13 @@ class BitBotsImportStrategy(ImportStrategy):
 
         converter.populate_recording_metadata(data, self.model_data.recording)
         model_data = converter.convert_to_model(data, relative_timestamp, self.model_data.recording)
-        if model_data:
-            self.model_data = self.model_data.merge(model_data)
+        self.model_data = self.model_data.merge(model_data)
 
         return self.model_data
 
     def _is_all_synced_data_available(self, data: InputData) -> bool:
+        # @TODO: add check for IMU data, when tf conversion to rotation is implemented
+        # return data.joint_command is not None and data.joint_state is not None and data.rotation is not None
         return data.joint_command is not None and data.joint_state is not None
 
     def _create_recording(self, summary: Summary, mcap_file_path: Path) -> Recording:

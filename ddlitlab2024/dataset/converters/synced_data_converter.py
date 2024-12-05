@@ -1,6 +1,6 @@
 from ddlitlab2024.dataset.converters.converter import Converter
 from ddlitlab2024.dataset.imports.data import InputData, ModelData
-from ddlitlab2024.dataset.models import JointCommands, JointStates, Recording
+from ddlitlab2024.dataset.models import JointCommands, JointStates, Recording, Rotation
 from ddlitlab2024.dataset.resampling.previous_interpolation_resampler import PreviousInterpolationResampler
 from ddlitlab2024.utils.utils import camelcase_to_snakecase, shift_radian_to_positive_range
 
@@ -24,18 +24,31 @@ class SyncedDataConverter(Converter):
         pass
 
     def convert_to_model(self, data: InputData, relative_timestamp: float, recording: Recording) -> ModelData:
-        assert data.joint_state is not None, "joint_state are required in synced resampling data"
-        assert data.joint_command is not None, "joint_command are required in synced resampling data"
+        assert data.joint_state is not None, "joint_states are required in synced resampling data"
+        assert data.joint_command is not None, "joint_commands are required in synced resampling data"
+        # @TODO: add once tf conversion to rotation is implemented
+        # assert data.rotation is not None, "IMU rotation is required in synced resampling data"
 
         models = ModelData()
 
         for sample in self.resampler.resample(data, relative_timestamp):
+            models.rotations.append(self._create_rotation(sample.data.rotation, sample.timestamp, recording))
             models.joint_states.append(self._create_joint_states(sample.data.joint_state, sample.timestamp, recording))
             models.joint_commands.append(
                 self._create_joint_commands(sample.data.joint_command, sample.timestamp, recording)
             )
 
         return models
+
+    def _create_rotation(self, msg, sampling_timestamp: float, recording: Recording) -> Rotation:
+        return Rotation(
+            stamp=sampling_timestamp,
+            recording=recording,
+            x=msg.orientation.x,
+            y=msg.orientation.y,
+            z=msg.orientation.z,
+            w=msg.orientation.w,
+        )
 
     def _create_joint_states(self, msg, sampling_timestamp: float, recording: Recording) -> JointStates:
         if msg is None:

@@ -9,7 +9,7 @@ on:
       - main
 
 jobs:
-  test_dataset:
+  test-dataset:
     strategy:
       matrix:
         os: [ubuntu-latest, ubuntu-22.04]
@@ -19,17 +19,8 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install poetry
-        run: pipx install poetry
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.x'
-          cache: "poetry"
-
-      - name: Install dependencies
-        run: poetry install
+      - name: Setup repository
+        uses: ./.github/actions/setup-repo
 
       - name: Create DB schema
         run: poetry run cli db create-schema

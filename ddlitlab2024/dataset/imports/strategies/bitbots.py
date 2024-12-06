@@ -2,6 +2,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
+import transforms3d as t3d
 from mcap.reader import make_reader
 from mcap.summary import Summary
 from mcap_ros2.decoder import DecoderFactory
@@ -60,6 +61,9 @@ class BitBotsImportStrategy(ImportStrategy):
 
             self._log_debug_info(summary, self.model_data.recording)
 
+            # Check if we got any imu messages
+            has_imu_data = any(channel.topic == "/imu/data" for channel in summary.channels.values())
+
             for _, channel, message, ros_msg in reader.iter_decoded_messages(topics=USED_TOPICS):
                 converter: Converter | None = None
 
@@ -77,11 +81,26 @@ class BitBotsImportStrategy(ImportStrategy):
                         last_messages_by_topic.joint_command = ros_msg
                         converter = self.synced_data_converter
                     case "/imu/data":
-                        last_messages_by_topic.rotation = ros_msg
+                        assert has_imu_data, "IMU data is not expected in this MCAP file"
+                        last_messages_by_topic.rotation = ros_msg.orientation
                         converter = self.synced_data_converter
                     case "/tf":
-                        # @TODO: implement imu data extraction from tf messages
-                        pass
+                        if not has_imu_data:
+                            for tf_msg in ros_msg.transforms:
+                                if tf_msg.child_frame_id == "base_footprint" and tf_msg.header.frame_id == "odom":
+                                    rot = tf_msg.transform.rotation
+
+                                    # Drop the yaw component of the quaternion
+                                    # This is necessary because the IMU data does not contain yaw information
+                                    # and the yaw in the rotation is from the odometry
+                                    # We need to drop it to avoid inconsistencies
+                                    euler = t3d.euler.quat2euler([rot.x, rot.y, rot.z, rot.w], axes="sxyz")
+                                    last_messages_by_topic.rotation = t3d.euler.euler2quat(
+                                        euler[0], euler[1], 0, axes="sxyz"
+                                    )
+                                    # TODO check the math in webots
+                                    # TODO check if we need the inverse
+                                    converter = self.synced_data_converter
                     case _:
                         logger.warning(f"Unhandled topic: {channel.topic} without conversion. Skipping...")
 

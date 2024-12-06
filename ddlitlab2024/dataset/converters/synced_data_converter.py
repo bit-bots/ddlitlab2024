@@ -26,8 +26,7 @@ class SyncedDataConverter(Converter):
     def convert_to_model(self, data: InputData, relative_timestamp: float, recording: Recording) -> ModelData:
         assert data.joint_state is not None, "joint_states are required in synced resampling data"
         assert data.joint_command is not None, "joint_commands are required in synced resampling data"
-        # @TODO: add once tf conversion to rotation is implemented
-        # assert data.rotation is not None, "IMU rotation is required in synced resampling data"
+        assert data.rotation is not None, "IMU rotation is required in synced resampling data"
 
         models = ModelData()
 
@@ -44,10 +43,10 @@ class SyncedDataConverter(Converter):
         return Rotation(
             stamp=sampling_timestamp,
             recording=recording,
-            x=msg.orientation.x,
-            y=msg.orientation.y,
-            z=msg.orientation.z,
-            w=msg.orientation.w,
+            x=msg.x,
+            y=msg.y,
+            z=msg.z,
+            w=msg.w,
         )
 
     def _create_joint_states(self, msg, sampling_timestamp: float, recording: Recording) -> JointStates:

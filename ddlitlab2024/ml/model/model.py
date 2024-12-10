@@ -116,13 +116,15 @@ class End2EndDiffusionTransformer(nn.Module):
 
         # All of the following encoders can be cached during inference TODO
         if self.action_history_encoder is not None:
-            context.append(self.action_history_encoder(input_data["past_actions"]))
+            context.append(self.action_history_encoder(input_data["joint_command_history"]))
         if self.imu_encoder is not None:
-            context.append(self.imu_encoder(input_data["imu"]))
+            context.append(self.imu_encoder(input_data["rotation"]))
         if self.joint_states_encoder is not None:
-            context.append(self.joint_states_encoder(input_data["joint_states"]))
+            context.append(self.joint_states_encoder(input_data["joint_state"]))
         if self.image_sequence_encoder is not None:
-            context.append(self.image_sequence_encoder(input_data["images"]))
+            context.append(self.image_sequence_encoder(input_data["image_data"]))
+
+        # TODO utilize gamestate and image time stamps
 
         return context
 

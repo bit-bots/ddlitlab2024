@@ -1,18 +1,26 @@
-import matplotlib.pyplot as plt
+from dataclasses import asdict
+
 import numpy as np
-import pandas as pd
 import torch
 import torch.nn.functional as F  # noqa
 from diffusers.schedulers.scheduling_ddim import DDIMScheduler
 from ema_pytorch import EMA
+from torch.utils.data import DataLoader
 from tqdm import tqdm
 
+from ddlitlab2024.dataset.pytorch import DDLITLab2024Dataset, Normalizer, worker_init_fn
+from ddlitlab2024.ml import logger
 from ddlitlab2024.ml.model import End2EndDiffusionTransformer
+from ddlitlab2024.ml.model.encoder.image import ImageEncoderType, SequenceEncoderType
+from ddlitlab2024.ml.model.encoder.imu import IMUEncoder
 
 # Check if CUDA is available and set the device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+
 if __name__ == "__main__":
+    logger.info("Starting training")
+    logger.info(f"Using device {device}")
     # TODO wandb
     # Define hyperparameters # TODO proper configuration
     hidden_dim = 256
@@ -20,111 +28,103 @@ if __name__ == "__main__":
     num_heads = 4
     action_context_length = 100
     trajectory_prediction_length = 10
-    epochs = 400
-    batch_size = 128
+    epochs = 4
+    batch_size = 16
     lr = 1e-4
-    train_timesteps = 1000
+    train_denoising_timesteps = 1000
 
-    # Read the robot data from the CSV file # TODO proper data loading
-    data = pd.read_csv("joint_commands.csv")
-
-    # Extract the joint command data all joints, and drop the time column
-    joints = [
-        "LHipYaw",
-        "RHipYaw",
-        "LHipRoll",
-        "RHipRoll",
-        "LHipPitch",
-        "RHipPitch",
-        "LKnee",
-        "RKnee",
-        "LAnklePitch",
-        "RAnklePitch",
-        "LAnkleRoll",
-        "RAnkleRoll",
-    ]
-    data = data[joints]
-    trajectory_dim = len(joints)
-
-    # Drop every second data point to reduce the sequence length (subsample) TODO proper subsampling
-    data = data[::3]
-
-    # Normalize the joint data
-    stds = data.std()
-    means = data.mean()
-    data = (data - means) / stds
-
-    # Chunk the data into sequences of 50 timesteps
-    timesteps = action_context_length + trajectory_prediction_length
-    time = torch.linspace(0, 1, timesteps).unsqueeze(-1)
-    real_trajectories = (
-        torch.tensor(np.array([data[i : i + timesteps].values for i in range(len(data) - timesteps)])).squeeze().float()
+    # Load the dataset
+    logger.info("Create dataset objects")
+    dataset = DDLITLab2024Dataset()
+    num_workers = 5
+    dataloader = DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        collate_fn=DDLITLab2024Dataset.collate_fn,
+        persistent_workers=num_workers > 1,
+        # prefetch_factor=10 * num_workers,
+        num_workers=num_workers,
+        worker_init_fn=worker_init_fn,
     )
 
-    num_samples = real_trajectories.size(0)
-
-    # Subplot each joint, showing the first n batches
-    n = 1
-    plt.figure(figsize=(12, 6))
-    for i in range(trajectory_dim):
-        plt.subplot(3, 4, i + 1)
-        plt.plot(real_trajectories[:n, :, i].T)
-        plt.title(f"Joint {data.columns[i]}")
-    plt.suptitle("LKnee Trajectories")
-    plt.show()
+    # Get some samples to estimate the mean and std
+    logger.info("Estimating normalization parameters")
+    num_normalization_samples = 50
+    random_indices = np.random.randint(0, len(dataset), (num_normalization_samples,))
+    normalization_samples = torch.cat([dataset[i].joint_command_history for i in tqdm(random_indices)], dim=0)
+    normalizer = Normalizer.fit(normalization_samples.to(device))
 
     # Initialize the Transformer model and optimizer, and move model to device
-    model = End2EndDiffusionTransformer(
-        num_joints=trajectory_dim,
+    model = End2EndDiffusionTransformer(  # TODO enforce all params to be consistent with the dataset
+        num_joints=dataset.num_joints,
         hidden_dim=hidden_dim,
-        num_layers=num_layers,
-        num_heads=num_heads,
-        max_action_context_length=action_context_length,
-        trajectory_prediction_length=trajectory_prediction_length,
+        use_action_history=True,
+        num_action_history_encoder_layers=2,
+        max_action_context_length=100,
+        use_imu=True,
+        imu_orientation_embedding_method=IMUEncoder.OrientationEmbeddingMethod.QUATERNION,
+        num_imu_encoder_layers=2,
+        max_imu_context_length=100,
+        use_joint_states=True,
+        joint_state_encoder_layers=2,
+        max_joint_state_context_length=100,
+        use_images=True,
+        image_sequence_encoder_type=SequenceEncoderType.TRANSFORMER,
+        image_encoder_type=ImageEncoderType.RESNET18,
+        num_image_sequence_encoder_layers=1,
+        max_image_context_length=10,
+        num_decoder_layers=4,
+        trajectory_prediction_length=10,
     ).to(device)
 
     # Add normalization parameters to the model
-    model.mean = torch.tensor(means.values).to(device)
-    model.std = torch.tensor(stds.values).to(device)
+    model.mean = normalizer.mean
+    model.std = normalizer.std
+    assert all(model.std != 0), "Normalization std is zero, this makes no sense. Some joints are constant."
 
+    # Utilize an Exponential Moving Average (EMA) for the model to smooth out the training process
     ema = EMA(model, beta=0.9999)
 
+    # Create optimizer and learning rate scheduler
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
-    lr_scheduler = torch.optim.lr_scheduler.OneCycleLR(
-        optimizer, max_lr=lr, total_steps=epochs * (num_samples // batch_size)
-    )
+    lr_scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=lr, total_steps=epochs * len(dataloader))
 
+    # Create diffusion noise scheduler
     scheduler = DDIMScheduler(beta_schedule="squaredcos_cap_v2", clip_sample=False)
-    scheduler.config["num_train_timesteps"] = train_timesteps
+    scheduler.config["num_train_timesteps"] = train_denoising_timesteps
 
     # Training loop
     for epoch in range(epochs):  # Number of training epochs
         mean_loss = 0
-        # Shuffle the data for each epoch
-        real_trajectories = real_trajectories[torch.randperm(real_trajectories.size(0))]
 
-        for batch in tqdm(range(num_samples // batch_size)):
-            targets = real_trajectories[batch * batch_size : (batch + 1) * batch_size].to(device)
+        # Iterate over the dataset
+        for i, batch in enumerate(tqdm(dataloader)):
+            # Move the data to the device
+            batch = {k: v.to(device) for k, v in asdict(batch).items()}
 
-            # Split the data into past actions and noisy action predictions
-            past_actions = targets[:, :action_context_length]
-            target_actions = targets[:, action_context_length:]
+            # Extract the target actions
+            joint_targets = batch["joint_command"]
 
+            # Normalize the target actions
+            joint_targets = normalizer.normalize(joint_targets)
+
+            # Reset the gradients
             optimizer.zero_grad()
 
             # Sample a random timestep for each trajectory in the batch
             random_timesteps = (
-                torch.randint(0, scheduler.config["num_train_timesteps"], (batch_size,)).long().to(device)
+                torch.randint(0, scheduler.config["num_train_timesteps"], (joint_targets.size(0),)).long().to(device)
             )
 
             # Sample noise to add to the entire trajectory
-            noise = torch.randn_like(target_actions).to(device)
+            noise = torch.randn_like(joint_targets).to(device)
 
             # Forward diffusion: Add noise to the entire trajectory at the random timestep
-            noisy_trajectory = scheduler.add_noise(target_actions, noise, random_timesteps)
+            noisy_trajectory = scheduler.add_noise(joint_targets, noise, random_timesteps)
 
             # Predict the error using the model
-            predicted_traj = model(past_actions, noisy_trajectory, random_timesteps)
+            predicted_traj = model(batch, noisy_trajectory, random_timesteps)
 
             # Compute the loss
             loss = F.mse_loss(predicted_traj, noise)
@@ -137,8 +137,8 @@ if __name__ == "__main__":
             lr_scheduler.step()
             ema.update()
 
-            if (batch + 1) % 100 == 0:
-                print(f"Epoch {epoch}, Loss: {mean_loss / batch}, LR: {lr_scheduler.get_last_lr()[0]}")
+            if (i + 1) % 5 == 0:
+                print(f"Epoch {epoch}, Loss: {mean_loss / i}, LR: {lr_scheduler.get_last_lr()[0]}")
 
     # Save the model
     torch.save(ema.state_dict(), "trajectory_transformer_model.pth")

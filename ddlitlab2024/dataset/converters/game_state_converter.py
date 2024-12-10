@@ -7,7 +7,7 @@ from ddlitlab2024.dataset.models import GameState, Recording, RobotState, TeamCo
 from ddlitlab2024.dataset.resampling.original_rate_resampler import OriginalRateResampler
 
 
-class GameStateMessage(Enum):
+class GameStateMessage(int, Enum):
     INITIAL = 0
     READY = 1
     SET = 2

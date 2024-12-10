@@ -2,6 +2,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
+import transforms3d as t3d
 from mcap.reader import make_reader
 from mcap.summary import Summary
 from mcap_ros2.decoder import DecoderFactory
@@ -13,10 +14,7 @@ from ddlitlab2024.dataset.converters.image_converter import ImageConverter
 from ddlitlab2024.dataset.converters.synced_data_converter import SyncedDataConverter
 from ddlitlab2024.dataset.imports.data import InputData, ModelData
 from ddlitlab2024.dataset.imports.model_importer import ImportMetadata, ImportStrategy
-from ddlitlab2024.dataset.models import (
-    DEFAULT_IMG_SIZE,
-    Recording,
-)
+from ddlitlab2024.dataset.models import DEFAULT_IMG_SIZE, Recording, Rotation
 
 USED_TOPICS = [
     "/DynamixelController/command",
@@ -60,6 +58,9 @@ class BitBotsImportStrategy(ImportStrategy):
 
             self._log_debug_info(summary, self.model_data.recording)
 
+            # Check if we got any imu messages
+            has_imu_data = any(channel.topic == "/imu/data" for channel in summary.channels.values())
+
             for _, channel, message, ros_msg in reader.iter_decoded_messages(topics=USED_TOPICS):
                 converter: Converter | None = None
 
@@ -77,11 +78,20 @@ class BitBotsImportStrategy(ImportStrategy):
                         last_messages_by_topic.joint_command = ros_msg
                         converter = self.synced_data_converter
                     case "/imu/data":
-                        # @TODO: implement imu conversion
-                        pass
+                        assert has_imu_data, "IMU data is not expected in this MCAP file"
+                        last_messages_by_topic.rotation = ros_msg.orientation
+                        converter = self.synced_data_converter
                     case "/tf":
-                        # @TODO: implement imu data extraction from tf messages
-                        pass
+                        if not has_imu_data:
+                            for tf_msg in ros_msg.transforms:
+                                if tf_msg.child_frame_id == "base_footprint" and tf_msg.header.frame_id == "base_link":
+                                    quat = tf_msg.transform.rotation
+                                    # Invert the quaternion to get the rotation from base_footprint
+                                    # to base_link instead of the other way around
+                                    # This is necessary to get pitch and roll angles in the correct frame
+                                    w, x, y, z = t3d.quaternions.qinverse([quat.w, quat.x, quat.y, quat.z])
+                                    last_messages_by_topic.rotation = Rotation(x=x, y=y, z=z, w=w)
+                                    converter = self.synced_data_converter
                     case _:
                         logger.warning(f"Unhandled topic: {channel.topic} without conversion. Skipping...")
 
@@ -111,12 +121,13 @@ class BitBotsImportStrategy(ImportStrategy):
 
         converter.populate_recording_metadata(data, self.model_data.recording)
         model_data = converter.convert_to_model(data, relative_timestamp, self.model_data.recording)
-        if model_data:
-            self.model_data = self.model_data.merge(model_data)
+        self.model_data = self.model_data.merge(model_data)
 
         return self.model_data
 
     def _is_all_synced_data_available(self, data: InputData) -> bool:
+        # @TODO: add check for IMU data, when tf conversion to rotation is implemented
+        # return data.joint_command is not None and data.joint_state is not None and data.rotation is not None
         return data.joint_command is not None and data.joint_state is not None
 
     def _create_recording(self, summary: Summary, mcap_file_path: Path) -> Recording:

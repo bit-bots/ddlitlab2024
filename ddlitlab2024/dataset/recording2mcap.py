@@ -4,14 +4,15 @@ import sys
 from pathlib import Path
 
 from sqlalchemy.orm import Session
+from transforms3d.euler import quat2euler
 
 from ddlitlab2024.dataset import logger
-from ddlitlab2024.dataset.models import JointStates, Recording, stamp_to_nanoseconds, stamp_to_seconds_nanoseconds
+from ddlitlab2024.dataset.models import Recording, stamp_to_nanoseconds, stamp_to_seconds_nanoseconds
 
 try:
     import rosbag2_py
     from builtin_interfaces.msg import Time
-    from geometry_msgs.msg import Quaternion
+    from geometry_msgs.msg import Quaternion, Vector3
     from rclpy.serialization import serialize_message
     from sensor_msgs.msg import Image, JointState
     from std_msgs.msg import Header, String
@@ -148,9 +149,12 @@ def write_rotations(
     param recording: The recording
     param writer: The mcap writer
     """
-    # Create topic
+    # Create topics
     writer.create_topic(
         rosbag2_py.TopicMetadata(name="/rotation", type="geometry_msgs/msg/Quaternion", serialization_format="cdr")
+    )
+    writer.create_topic(
+        rosbag2_py.TopicMetadata(name="/rotation/euler", type="geometry_msgs/msg/Vector3", serialization_format="cdr")
     )
 
     # Write rotations
@@ -163,6 +167,15 @@ def write_rotations(
             w=rotation.w,
         )
         writer.write("/rotation", serialize_message(rotation_msg), stamp_to_nanoseconds(rotation.stamp))
+
+        # Convert quaternion to euler angles
+        ax, ay, az = quat2euler([rotation.w, rotation.x, rotation.y, rotation.z], axes="sxyz")
+        euler = Vector3(
+            x=ax,
+            y=ay,
+            z=az,
+        )
+        writer.write("/rotation/euler", serialize_message(euler), stamp_to_nanoseconds(rotation.stamp))
 
 
 def write_joint_states(
@@ -255,7 +268,7 @@ def write_joint_commands(
             ("head_pan", joint_command.head_pan),
             ("head_tilt", joint_command.head_tilt),
         ]
-        joint_command_msg = JointStates(
+        joint_command_msg = JointState(
             header=Header(stamp=Time(sec=seconds, nanosec=nanoseconds), frame_id="base_link"),
             name=[name for name, _ in joints],
             position=[position for _, position in joints],

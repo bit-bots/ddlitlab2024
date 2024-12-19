@@ -1,19 +1,22 @@
 {
-    "cSpell.words": [
-        "bigendian",
-        "ddlitlab",
-        "dtype",
-        "mcap",
-        "nanosec",
-        "ndarray",
-        "ndim",
-        "nullable",
-        "rclpy",
-        "rosbag",
-        "sessionmaker",
-        "sqlalchemy",
-        "sqlite",
-        "tobytes"
-    ],
-    "python.analysis.typeCheckingMode": "basic"
+  "cSpell.words": [
+    "bigendian",
+    "ddlitlab",
+    "dtype",
+    "mcap",
+    "nanosec",
+    "ndarray",
+    "ndim",
+    "nullable",
+    "rclpy",
+    "rosbag",
+    "sessionmaker",
+    "sqlalchemy",
+    "sqlite",
+    "tobytes"
+  ],
+  "python.analysis.typeCheckingMode": "basic",
+  "python.testing.pytestArgs": ["tests"],
+  "python.testing.unittestEnabled": false,
+  "python.testing.pytestEnabled": true
 }

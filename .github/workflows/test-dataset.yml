@@ -9,7 +9,7 @@ on:
       - main
 
 jobs:
-  test_dataset:
+  test-dataset:
     strategy:
       matrix:
         include:
@@ -17,23 +17,17 @@ jobs:
             python-version: 3.10.x
           - os: ubuntu-24.04
             python-version: 3.12.x
+
     runs-on: ${{ matrix.os }}
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install poetry
-        run: pipx install poetry
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Setup repository
+        uses: ./.github/actions/setup-repo
         with:
           python-version: ${{ matrix.python-version }}
-          cache: "poetry"
-
-      - name: Install dependencies
-        run: poetry install
 
       - name: Create DB schema
         run: poetry run cli db create-schema

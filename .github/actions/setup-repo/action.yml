@@ -1,0 +1,23 @@
+name: Setup Repository
+description: Checkout code, install poetry, set up python and install dependencies
+inputs:
+  python-version:
+    description: "Python version to use"
+    required: true
+    default: "3.x"
+runs:
+  using: "composite"
+  steps:
+    - name: Install poetry
+      run: pipx install poetry
+      shell: bash
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+        cache: "poetry"
+
+    - name: Install dependencies
+      run: poetry install
+      shell: bash

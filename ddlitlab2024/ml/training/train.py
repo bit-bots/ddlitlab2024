@@ -1,4 +1,5 @@
 from dataclasses import asdict
+from functools import partial
 
 import numpy as np
 import torch
@@ -17,6 +18,8 @@ from ddlitlab2024.ml.model.encoder.imu import IMUEncoder
 # Check if CUDA is available and set the device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+# Fix tqdm when the terminal width changes, this is for some reason not a default, therfore we make it one
+tqdm = partial(tqdm, dynamic_ncols=True)
 
 if __name__ == "__main__":
     logger.info("Starting training")
@@ -28,7 +31,7 @@ if __name__ == "__main__":
     num_heads = 4
     action_context_length = 100
     trajectory_prediction_length = 10
-    epochs = 4
+    epochs = 50
     batch_size = 16
     lr = 1e-4
     train_denoising_timesteps = 1000
@@ -36,11 +39,14 @@ if __name__ == "__main__":
     action_context_length = 100
     imu_context_length = 100
     joint_state_context_length = 100
-    num_normalization_samples = 50
+    num_normalization_samples = 1000
+    num_joints = 20
+    checkpoint: str | None = None
 
     # Load the dataset
     logger.info("Create dataset objects")
     dataset = DDLITLab2024Dataset(
+        num_joints=num_joints,
         num_frames_video=image_context_length,
         num_samples_joint_trajectory_future=trajectory_prediction_length,
         num_samples_joint_trajectory=action_context_length,
@@ -67,7 +73,7 @@ if __name__ == "__main__":
 
     # Initialize the Transformer model and optimizer, and move model to device
     model = End2EndDiffusionTransformer(  # TODO enforce all params to be consistent with the dataset
-        num_joints=dataset.num_joints,
+        num_joints=num_joints,
         hidden_dim=hidden_dim,
         use_action_history=True,
         num_action_history_encoder_layers=2,
@@ -91,10 +97,16 @@ if __name__ == "__main__":
     # Add normalization parameters to the model
     model.mean = normalizer.mean
     model.std = normalizer.std
+    logger.info(f"Normalization values:\nJoint mean: {normalizer.mean}\nJoint std: {normalizer.std}")
     assert all(model.std != 0), "Normalization std is zero, this makes no sense. Some joints are constant."
 
     # Utilize an Exponential Moving Average (EMA) for the model to smooth out the training process
-    ema = EMA(model, beta=0.9999)
+    ema = EMA(model, beta=0.999)
+
+    # Load the model if a checkpoint is provided
+    if checkpoint is not None:
+        logger.info(f"Loading model from {checkpoint}")
+        ema.load_state_dict(torch.load(checkpoint, weights_only=True))
 
     # Create optimizer and learning rate scheduler
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
@@ -148,8 +160,8 @@ if __name__ == "__main__":
             ema.update()
 
             pbar.set_postfix_str(
-                f"Epoch {epoch}, Loss: {mean_loss / (i + 1):.05f}, LR: {lr_scheduler.get_last_lr()[0]:0.5f}"
+                f"Epoch {epoch}, Loss: {mean_loss / (i + 1):.05f}, LR: {lr_scheduler.get_last_lr()[0]:0.7f}"
             )
 
-    # Save the model
-    torch.save(ema.state_dict(), "trajectory_transformer_model.pth")
+        # Save the model
+        torch.save(ema.state_dict(), "trajectory_transformer_model.pth")

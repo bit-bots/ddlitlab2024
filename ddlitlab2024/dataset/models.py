@@ -3,11 +3,9 @@ from enum import Enum
 from typing import Optional
 
 import numpy as np
-from sqlalchemy import Boolean, CheckConstraint, DateTime, Float, ForeignKey, Index, Integer, String, asc
-from sqlalchemy.orm import Mapped, declarative_base, mapped_column, relationship
+from sqlalchemy import Boolean, CheckConstraint, DateTime, Float, ForeignKey, Index, Integer, MetaData, String, asc
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.types import LargeBinary
-
-Base = declarative_base()
 
 DEFAULT_IMG_SIZE = (480, 480)
 
@@ -44,6 +42,20 @@ class TeamColor(str, Enum):
         return [e.value for e in cls]
 
 
+class Base(DeclarativeBase):
+    # Setup consistent naming patterns for constraints, based on suggestions:
+    # https://alembic.sqlalchemy.org/en/latest/naming.html
+    metadata = MetaData(
+        naming_convention={
+            "ix": "ix_%(column_0_label)s",
+            "uq": "uq_%(table_name)s_%(column_0_name)s",
+            "ck": "ck_%(table_name)s_%(constraint_name)s",
+            "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
+            "pk": "pk_%(table_name)s",
+        }
+    )
+
+
 class Recording(Base):
     __tablename__ = "Recording"
 
@@ -78,10 +90,10 @@ class Recording(Base):
     )
 
     __table_args__ = (
-        CheckConstraint(img_width > 0),
-        CheckConstraint(img_height > 0),
-        CheckConstraint(team_color.in_(TeamColor.values())),
-        CheckConstraint("end_time >= start_time"),
+        CheckConstraint(img_width > 0, name="img_width_value"),
+        CheckConstraint(img_height > 0, name="img_height_value"),
+        CheckConstraint(team_color.in_(TeamColor.values()), name="team_color_enum"),
+        CheckConstraint(end_time >= start_time, name="end_time_ge_start_time"),
     )
 
 
@@ -98,9 +110,9 @@ class Image(Base):
     recording: Mapped["Recording"] = relationship("Recording", back_populates="images")
 
     __table_args__ = (
-        CheckConstraint("stamp >= 0"),
+        CheckConstraint("stamp >= 0", name="stamp_value"),
         # Index to retrieve images in order from a given recording
-        Index("idx_recording_stamp_image", "recording_id", asc("stamp")),
+        Index(None, "recording_id", asc("stamp")),
     )
 
     def __init__(
@@ -131,13 +143,13 @@ class Rotation(Base):
     recording: Mapped["Recording"] = relationship("Recording", back_populates="rotations")
 
     __table_args__ = (
-        CheckConstraint("stamp >= 0"),
-        CheckConstraint("x >= -1 AND x <= 1"),
-        CheckConstraint("y >= -1 AND y <= 1"),
-        CheckConstraint("z >= -1 AND z <= 1"),
-        CheckConstraint("w >= -1 AND w <= 1"),
+        CheckConstraint(stamp >= 0, name="stamp_value"),
+        CheckConstraint("x >= -1 AND x <= 1", name="x_value"),
+        CheckConstraint("y >= -1 AND y <= 1", name="y_value"),
+        CheckConstraint("z >= -1 AND z <= 1", name="z_value"),
+        CheckConstraint("w >= -1 AND w <= 1", name="w_value"),
         # Index to retrieve rotations in order from a given recording
-        Index("idx_recording_stamp_rotation", "recording_id", asc("stamp")),
+        Index(None, "recording_id", asc("stamp")),
     )
 
 
@@ -152,7 +164,9 @@ class JointStates(Base):
     r_shoulder_roll: Mapped[float] = mapped_column(Float, name="RShoulderRoll")
     l_shoulder_roll: Mapped[float] = mapped_column(Float, name="LShoulderRoll")
     r_elbow: Mapped[float] = mapped_column(Float, name="RElbow")
+    r_elbow_yaw: Mapped[float] = mapped_column(Float, name="RElbowYaw", default=0.0)
     l_elbow: Mapped[float] = mapped_column(Float, name="LElbow")
+    l_elbow_yaw: Mapped[float] = mapped_column(Float, name="LElbowYaw", default=0.0)
     r_hip_yaw: Mapped[float] = mapped_column(Float, name="RHipYaw")
     l_hip_yaw: Mapped[float] = mapped_column(Float, name="LHipYaw")
     r_hip_roll: Mapped[float] = mapped_column(Float, name="RHipRoll")
@@ -171,29 +185,31 @@ class JointStates(Base):
     recording: Mapped["Recording"] = relationship("Recording", back_populates="joint_states")
 
     __table_args__ = (
-        CheckConstraint("stamp >= 0"),
-        CheckConstraint("RShoulderPitch >= 0 AND RShoulderPitch < 2 * pi()"),
-        CheckConstraint("LShoulderPitch >= 0 AND LShoulderPitch < 2 * pi()"),
-        CheckConstraint("RShoulderRoll >= 0 AND RShoulderRoll < 2 * pi()"),
-        CheckConstraint("LShoulderRoll >= 0 AND LShoulderRoll < 2 * pi()"),
-        CheckConstraint("RElbow >= 0 AND RElbow < 2 * pi()"),
-        CheckConstraint("LElbow >= 0 AND LElbow < 2 * pi()"),
-        CheckConstraint("RHipYaw >= 0 AND RHipYaw < 2 * pi()"),
-        CheckConstraint("LHipYaw >= 0 AND LHipYaw < 2 * pi()"),
-        CheckConstraint("RHipRoll >= 0 AND RHipRoll < 2 * pi()"),
-        CheckConstraint("LHipRoll >= 0 AND LHipRoll < 2 * pi()"),
-        CheckConstraint("RHipPitch >= 0 AND RHipPitch < 2 * pi()"),
-        CheckConstraint("LHipPitch >= 0 AND LHipPitch < 2 * pi()"),
-        CheckConstraint("RKnee >= 0 AND RKnee < 2 * pi()"),
-        CheckConstraint("LKnee >= 0 AND LKnee < 2 * pi()"),
-        CheckConstraint("RAnklePitch >= 0 AND RAnklePitch < 2 * pi()"),
-        CheckConstraint("LAnklePitch >= 0 AND LAnklePitch < 2 * pi()"),
-        CheckConstraint("RAnkleRoll >= 0 AND RAnkleRoll < 2 * pi()"),
-        CheckConstraint("LAnkleRoll >= 0 AND LAnkleRoll < 2 * pi()"),
-        CheckConstraint("HeadPan >= 0 AND HeadPan < 2 * pi()"),
-        CheckConstraint("HeadTilt >= 0 AND HeadTilt < 2 * pi()"),
+        CheckConstraint(stamp >= 0, name="stamp_value"),
+        CheckConstraint("RShoulderPitch >= 0 AND RShoulderPitch < 2 * pi()", name="RShoulderPitch_value"),
+        CheckConstraint("LShoulderPitch >= 0 AND LShoulderPitch < 2 * pi()", name="LShoulderPitch_value"),
+        CheckConstraint("RShoulderRoll >= 0 AND RShoulderRoll < 2 * pi()", name="RShoulderRoll_value"),
+        CheckConstraint("LShoulderRoll >= 0 AND LShoulderRoll < 2 * pi()", name="LShoulderRoll_value"),
+        CheckConstraint("RElbow >= 0 AND RElbow < 2 * pi()", name="RElbow_value"),
+        CheckConstraint("RElbowYaw >= 0 AND RElbowYaw < 2 * pi()", name="RElbowYaw_value"),
+        CheckConstraint("LElbow >= 0 AND LElbow < 2 * pi()", name="LElbow_value"),
+        CheckConstraint("LElbowYaw >= 0 AND LElbowYaw < 2 * pi()", name="LElbowYaw_value"),
+        CheckConstraint("RHipYaw >= 0 AND RHipYaw < 2 * pi()", name="RHipYaw_value"),
+        CheckConstraint("LHipYaw >= 0 AND LHipYaw < 2 * pi()", name="LHipYaw_value"),
+        CheckConstraint("RHipRoll >= 0 AND RHipRoll < 2 * pi()", name="RHipRoll_value"),
+        CheckConstraint("LHipRoll >= 0 AND LHipRoll < 2 * pi()", name="LHipRoll_value"),
+        CheckConstraint("RHipPitch >= 0 AND RHipPitch < 2 * pi()", name="RHipPitch_value"),
+        CheckConstraint("LHipPitch >= 0 AND LHipPitch < 2 * pi()", name="LHipPitch_value"),
+        CheckConstraint("RKnee >= 0 AND RKnee < 2 * pi()", name="RKnee_value"),
+        CheckConstraint("LKnee >= 0 AND LKnee < 2 * pi()", name="LKnee_value"),
+        CheckConstraint("RAnklePitch >= 0 AND RAnklePitch < 2 * pi()", name="RAnklePitch_value"),
+        CheckConstraint("LAnklePitch >= 0 AND LAnklePitch < 2 * pi()", name="LAnklePitch_value"),
+        CheckConstraint("RAnkleRoll >= 0 AND RAnkleRoll < 2 * pi()", name="RAnkleRoll_value"),
+        CheckConstraint("LAnkleRoll >= 0 AND LAnkleRoll < 2 * pi()", name="LAnkleRoll_value"),
+        CheckConstraint("HeadPan >= 0 AND HeadPan < 2 * pi()", name="HeadPan_value"),
+        CheckConstraint("HeadTilt >= 0 AND HeadTilt < 2 * pi()", name="HeadTilt_value"),
         # Index to retrieve joint states in order from a given recording
-        Index("idx_recording_stamp_joint_state", "recording_id", asc("stamp")),
+        Index(None, "recording_id", asc("stamp")),
     )
 
 
@@ -208,7 +224,9 @@ class JointCommands(Base):
     r_shoulder_roll: Mapped[float] = mapped_column(Float, name="RShoulderRoll")
     l_shoulder_roll: Mapped[float] = mapped_column(Float, name="LShoulderRoll")
     r_elbow: Mapped[float] = mapped_column(Float, name="RElbow")
+    r_elbow_yaw: Mapped[float] = mapped_column(Float, name="RElbowYaw", default=0.0)
     l_elbow: Mapped[float] = mapped_column(Float, name="LElbow")
+    l_elbow_yaw: Mapped[float] = mapped_column(Float, name="LElbowYaw", default=0.0)
     r_hip_yaw: Mapped[float] = mapped_column(Float, name="RHipYaw")
     l_hip_yaw: Mapped[float] = mapped_column(Float, name="LHipYaw")
     r_hip_roll: Mapped[float] = mapped_column(Float, name="RHipRoll")
@@ -227,29 +245,31 @@ class JointCommands(Base):
     recording: Mapped["Recording"] = relationship("Recording", back_populates="joint_commands")
 
     __table_args__ = (
-        CheckConstraint("stamp >= 0"),
-        CheckConstraint("RShoulderPitch >= 0 AND RShoulderPitch < 2 * pi()"),
-        CheckConstraint("LShoulderPitch >= 0 AND LShoulderPitch < 2 * pi()"),
-        CheckConstraint("RShoulderRoll >= 0 AND RShoulderRoll < 2 * pi()"),
-        CheckConstraint("LShoulderRoll >= 0 AND LShoulderRoll < 2 * pi()"),
-        CheckConstraint("RElbow >= 0 AND RElbow < 2 * pi()"),
-        CheckConstraint("LElbow >= 0 AND LElbow < 2 * pi()"),
-        CheckConstraint("RHipYaw >= 0 AND RHipYaw < 2 * pi()"),
-        CheckConstraint("LHipYaw >= 0 AND LHipYaw < 2 * pi()"),
-        CheckConstraint("RHipRoll >= 0 AND RHipRoll < 2 * pi()"),
-        CheckConstraint("LHipRoll >= 0 AND LHipRoll < 2 * pi()"),
-        CheckConstraint("RHipPitch >= 0 AND RHipPitch < 2 * pi()"),
-        CheckConstraint("LHipPitch >= 0 AND LHipPitch < 2 * pi()"),
-        CheckConstraint("RKnee >= 0 AND RKnee < 2 * pi()"),
-        CheckConstraint("LKnee >= 0 AND LKnee < 2 * pi()"),
-        CheckConstraint("RAnklePitch >= 0 AND RAnklePitch < 2 * pi()"),
-        CheckConstraint("LAnklePitch >= 0 AND LAnklePitch < 2 * pi()"),
-        CheckConstraint("RAnkleRoll >= 0 AND RAnkleRoll < 2 * pi()"),
-        CheckConstraint("LAnkleRoll >= 0 AND LAnkleRoll < 2 * pi()"),
-        CheckConstraint("HeadPan >= 0 AND HeadPan < 2 * pi()"),
-        CheckConstraint("HeadTilt >= 0 AND HeadTilt < 2 * pi()"),
+        CheckConstraint(stamp >= 0, name="stamp_value"),
+        CheckConstraint("RShoulderPitch >= 0 AND RShoulderPitch < 2 * pi()", name="RShoulderPitch_value"),
+        CheckConstraint("LShoulderPitch >= 0 AND LShoulderPitch < 2 * pi()", name="LShoulderPitch_value"),
+        CheckConstraint("RShoulderRoll >= 0 AND RShoulderRoll < 2 * pi()", name="RShoulderRoll_value"),
+        CheckConstraint("LShoulderRoll >= 0 AND LShoulderRoll < 2 * pi()", name="LShoulderRoll_value"),
+        CheckConstraint("RElbow >= 0 AND RElbow < 2 * pi()", name="RElbow_value"),
+        CheckConstraint("RElbowYaw >= 0 AND RElbowYaw < 2 * pi()", name="RElbowYaw_value"),
+        CheckConstraint("LElbow >= 0 AND LElbow < 2 * pi()", name="LElbow_value"),
+        CheckConstraint("LElbowYaw >= 0 AND LElbowYaw < 2 * pi()", name="LElbowYaw_value"),
+        CheckConstraint("RHipYaw >= 0 AND RHipYaw < 2 * pi()", name="RHipYaw_value"),
+        CheckConstraint("LHipYaw >= 0 AND LHipYaw < 2 * pi()", name="LHipYaw_value"),
+        CheckConstraint("RHipRoll >= 0 AND RHipRoll < 2 * pi()", name="RHipRoll_value"),
+        CheckConstraint("LHipRoll >= 0 AND LHipRoll < 2 * pi()", name="LHipRoll_value"),
+        CheckConstraint("RHipPitch >= 0 AND RHipPitch < 2 * pi()", name="RHipPitch_value"),
+        CheckConstraint("LHipPitch >= 0 AND LHipPitch < 2 * pi()", name="LHipPitch_value"),
+        CheckConstraint("RKnee >= 0 AND RKnee < 2 * pi()", name="RKnee_value"),
+        CheckConstraint("LKnee >= 0 AND LKnee < 2 * pi()", name="LKnee_value"),
+        CheckConstraint("RAnklePitch >= 0 AND RAnklePitch < 2 * pi()", name="RAnklePitch_value"),
+        CheckConstraint("LAnklePitch >= 0 AND LAnklePitch < 2 * pi()", name="LAnklePitch_value"),
+        CheckConstraint("RAnkleRoll >= 0 AND RAnkleRoll < 2 * pi()", name="RAnkleRoll_value"),
+        CheckConstraint("LAnkleRoll >= 0 AND LAnkleRoll < 2 * pi()", name="LAnkleRoll_value"),
+        CheckConstraint("HeadPan >= 0 AND HeadPan < 2 * pi()", name="HeadPan_value"),
+        CheckConstraint("HeadTilt >= 0 AND HeadTilt < 2 * pi()", name="HeadTilt_value"),
         # Index to retrieve joint commands in order from a given recording
-        Index("idx_recording_stamp_joint_command", "recording_id", asc("stamp")),
+        Index(None, "recording_id", asc("stamp")),
     )
 
 
@@ -264,9 +284,9 @@ class GameState(Base):
     recording: Mapped["Recording"] = relationship("Recording", back_populates="game_states")
 
     __table_args__ = (
-        CheckConstraint(state.in_(RobotState.values())),
+        CheckConstraint(state.in_(RobotState.values()), name="state_enum"),
         # Index to retrieve game states in order from a given recording
-        Index("idx_recording_stamp_game_state", "recording_id", asc("stamp")),
+        Index(None, "recording_id", asc("stamp")),
     )
 
 

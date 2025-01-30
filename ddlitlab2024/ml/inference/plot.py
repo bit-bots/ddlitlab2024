@@ -25,7 +25,7 @@ if __name__ == "__main__":
     # Parse the command line arguments
     parser = argparse.ArgumentParser(description="Inference Plot")
     parser.add_argument("checkpoint", type=str, help="Path to the checkpoint to load")
-    parser.add_argument("--steps", type=int, default=30, help="Number of denoising steps")
+    parser.add_argument("--steps", type=int, default=30, help="Number of denoising steps (not used for distilled)")
     parser.add_argument("--num_samples", type=int, default=10, help="Number of samples to generate")
     args = parser.parse_args()
 
@@ -104,15 +104,20 @@ if __name__ == "__main__":
         noisy_trajectory = torch.randn_like(joint_targets).to(device)
         trajectory = noisy_trajectory
 
-        # Perform the denoising process
-        scheduler.set_timesteps(args.steps)
-        for t in scheduler.timesteps:
+        if params.get("distilled_decoder", False):
+            # Directly predict the trajectory based on the noise
             with torch.no_grad():
-                # Predict the noise residual
-                noise_pred = model(batch, trajectory, torch.tensor([t], device=device))
+                trajectory = model(batch, noisy_trajectory, torch.tensor([0], device=device))
+        else:
+            # Perform the denoising process
+            scheduler.set_timesteps(args.steps)
+            for t in scheduler.timesteps:
+                with torch.no_grad():
+                    # Predict the noise residual
+                    noise_pred = model(batch, trajectory, torch.tensor([t], device=device))
 
-                # Update the trajectory based on the predicted noise and the current step of the denoising process
-                trajectory = scheduler.step(noise_pred, t, trajectory).prev_sample
+                    # Update the trajectory based on the predicted noise and the current step of the denoising process
+                    trajectory = scheduler.step(noise_pred, t, trajectory).prev_sample
 
         # Undo the normalization
         trajectory = normalizer.denormalize(trajectory)

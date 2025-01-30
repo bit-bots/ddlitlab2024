@@ -214,7 +214,8 @@ class JointStates(Base):
         Index(None, "recording_id", asc("stamp")),
     )
 
-    def get_ordered_joint_names(self) -> list[str]:
+    @staticmethod
+    def get_ordered_joint_names() -> list[str]:
         return [
             JointStates.head_pan.name,
             JointStates.head_tilt.name,

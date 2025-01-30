@@ -78,6 +78,7 @@ class DDLITLab2024Dataset(Dataset):
         self.num_frames_video = num_frames_video
         self.trajectory_stride = trajectory_stride
         self.num_joints = num_joints
+        self.joint_names = JointStates.get_ordered_joint_names()
 
         # Print out metadata
         cursor = self.db_connection.cursor()
@@ -119,7 +120,7 @@ class DDLITLab2024Dataset(Dataset):
         )
 
         # Convert to numpy array, keep only the joint angle columns in alphabetical order
-        raw_joint_data = raw_joint_data[JointStates.get_ordered_joint_names()].to_numpy(dtype=np.float32)
+        raw_joint_data = raw_joint_data[self.joint_names].to_numpy(dtype=np.float32)
 
         assert raw_joint_data.shape[1] == self.num_joints, "The number of joints is not correct"
 

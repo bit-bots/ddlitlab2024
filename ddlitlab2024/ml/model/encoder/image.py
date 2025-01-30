@@ -3,6 +3,7 @@ from enum import Enum
 import torch
 from torch import nn
 from torchvision.models import resnet18, resnet50, swin_s, swin_t
+from torchvision.models.resnet import ResNet18_Weights, ResNet50_Weights
 
 from ddlitlab2024.ml.model.encoder.base import BaseEncoder
 
@@ -60,12 +61,11 @@ class ResNetImageEncoder(AbstractImageEncoder):
         super().__init__()
         match resnet_type:
             case ImageEncoderType.RESNET18:
-                self.encoder = resnet18(pretrained=True)
+                self.encoder = resnet18(weights=ResNet18_Weights.DEFAULT)
             case ImageEncoderType.RESNET50:
-                self.encoder = resnet50(pretrained=True)
+                self.encoder = resnet50(weights=ResNet50_Weights.DEFAULT)
             case _:
                 raise ValueError(f"Invalid ResNet type: {resnet_type}")
-        # TODO check for softmax layer etc.
         self.encoder.fc = nn.Linear(self.encoder.fc.in_features, hidden_dim)
 
 

@@ -208,3 +208,6 @@ ENV/
 
 # Torch models
 *.pth
+
+# Wandb Logs
+ddlitlab2024/ml/training/wandb/

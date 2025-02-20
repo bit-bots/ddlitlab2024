@@ -25,7 +25,7 @@ if __name__ == "__main__":
     # Parse the command line arguments
     parser = argparse.ArgumentParser(description="Inference Plot")
     parser.add_argument("checkpoint", type=str, help="Path to the checkpoint to load")
-    parser.add_argument("--steps", type=int, default=30, help="Number of denoising steps")
+    parser.add_argument("--steps", type=int, default=30, help="Number of denoising steps (not used for distilled)")
     parser.add_argument("--num_samples", type=int, default=10, help="Number of samples to generate")
     args = parser.parse_args()
 
@@ -55,8 +55,12 @@ if __name__ == "__main__":
         image_encoder_type=ImageEncoderType(params["image_encoder_type"]),
         num_image_sequence_encoder_layers=params["num_image_sequence_encoder_layers"],
         image_context_length=params["image_context_length"],
+        image_use_final_avgpool=params.get("image_use_final_avgpool", True),
+        image_resolution=params.get("image_resolution", 480),
         num_decoder_layers=params["num_decoder_layers"],
         trajectory_prediction_length=params["trajectory_prediction_length"],
+        use_gamestate=params["use_gamestate"],
+        encoder_patch_size=params["encoder_patch_size"],
     ).to(device)
     normalizer = Normalizer(model.mean, model.std)
     model.load_state_dict(checkpoint["model_state_dict"])
@@ -76,6 +80,13 @@ if __name__ == "__main__":
         num_samples_joint_trajectory=params["action_context_length"],
         num_samples_imu=params["imu_context_length"],
         num_samples_joint_states=params["joint_state_context_length"],
+        imu_representation=IMUEncoder.OrientationEmbeddingMethod(params["imu_orientation_embedding_method"]),
+        use_action_history=params["use_action_history"],
+        use_imu=params["use_imu"],
+        use_joint_states=params["use_joint_states"],
+        use_images=params["use_images"],
+        use_game_state=params["use_gamestate"],
+        image_resolution=params.get("image_resolution", 480),
     )
 
     # Create DataLoader object
@@ -104,15 +115,20 @@ if __name__ == "__main__":
         noisy_trajectory = torch.randn_like(joint_targets).to(device)
         trajectory = noisy_trajectory
 
-        # Perform the denoising process
-        scheduler.set_timesteps(args.steps)
-        for t in scheduler.timesteps:
+        if params.get("distilled_decoder", False):
+            # Directly predict the trajectory based on the noise
             with torch.no_grad():
-                # Predict the noise residual
-                noise_pred = model(batch, trajectory, torch.tensor([t], device=device))
+                trajectory = model(batch, noisy_trajectory, torch.tensor([0], device=device))
+        else:
+            # Perform the denoising process
+            scheduler.set_timesteps(args.steps)
+            for t in scheduler.timesteps:
+                with torch.no_grad():
+                    # Predict the noise residual
+                    noise_pred = model(batch, trajectory, torch.tensor([t], device=device))
 
-                # Update the trajectory based on the predicted noise and the current step of the denoising process
-                trajectory = scheduler.step(noise_pred, t, trajectory).prev_sample
+                    # Update the trajectory based on the predicted noise and the current step of the denoising process
+                    trajectory = scheduler.step(noise_pred, t, trajectory).prev_sample
 
         # Undo the normalization
         trajectory = normalizer.denormalize(trajectory)

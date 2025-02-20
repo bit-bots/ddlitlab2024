@@ -4,12 +4,12 @@ import sqlite3
 from collections.abc import Iterable
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Optional
 
+import cv2
 import numpy as np
 import pandas as pd
 import torch
-from profilehooks import profile
 from tabulate import tabulate
 from torch.utils.data import DataLoader, Dataset
 
@@ -40,15 +40,15 @@ class DDLITLab2024Dataset(Dataset):
     @dataclass
     class Result:
         joint_command: torch.Tensor
-        joint_command_history: torch.Tensor
-        joint_state: torch.Tensor
-        rotation: torch.Tensor
-        game_state: torch.Tensor
-        image_data: torch.Tensor
-        image_stamps: torch.Tensor
+        joint_command_history: Optional[torch.Tensor]
+        joint_state: Optional[torch.Tensor]
+        rotation: Optional[torch.Tensor]
+        game_state: Optional[torch.Tensor]
+        image_data: Optional[torch.Tensor]
+        image_stamps: Optional[torch.Tensor]
 
         def shapes(self) -> dict[str, tuple[int, ...]]:
-            return {k: v.shape for k, v in asdict(self).items()}
+            return {k: v.shape for k, v in asdict(self).items() if v is not None}
 
     def __init__(
         self,
@@ -61,8 +61,14 @@ class DDLITLab2024Dataset(Dataset):
         sampling_rate: int = 100,
         max_fps_video: int = 10,
         num_frames_video: int = 50,
-        trajectory_stride: int = 10,
+        image_resolution: int = 480,
+        trajectory_stride: int = 1,
         num_joints: int = 20,
+        use_images: bool = True,
+        use_imu: bool = True,
+        use_joint_states: bool = True,
+        use_action_history: bool = True,
+        use_game_state: bool = True,
     ):
         # Initialize the database connection
         self.db_connection: sqlite3.Connection = db_connection if db_connection else connect_to_db()
@@ -76,8 +82,15 @@ class DDLITLab2024Dataset(Dataset):
         self.sampling_rate = sampling_rate
         self.max_fps_video = max_fps_video
         self.num_frames_video = num_frames_video
+        self.image_resolution = image_resolution
         self.trajectory_stride = trajectory_stride
         self.num_joints = num_joints
+        self.joint_names = JointStates.get_ordered_joint_names()
+        self.use_images = use_images
+        self.use_imu = use_imu
+        self.use_joint_states = use_joint_states
+        self.use_action_history = use_action_history
+        self.use_game_state = use_game_state
 
         # Print out metadata
         cursor = self.db_connection.cursor()
@@ -100,7 +113,9 @@ class DDLITLab2024Dataset(Dataset):
             assert num_data_points > 0, "Recording length is negative or zero"
             total_samples_before = self.num_samples
             # Calculate the number of batches that can be build from the recording including the stride
-            self.num_samples += int(num_data_points / self.trajectory_stride)
+            self.num_samples += int(
+                (num_data_points - self.num_samples_joint_trajectory_future) / self.trajectory_stride
+            )
             # Store the boundaries of the samples for later retrieval
             self.sample_boundaries.append((total_samples_before, self.num_samples, recording_id))
 
@@ -119,7 +134,7 @@ class DDLITLab2024Dataset(Dataset):
         )
 
         # Convert to numpy array, keep only the joint angle columns in alphabetical order
-        raw_joint_data = raw_joint_data[JointStates.get_ordered_joint_names()].to_numpy(dtype=np.float32)
+        raw_joint_data = raw_joint_data[self.joint_names].to_numpy(dtype=np.float32)
 
         assert raw_joint_data.shape[1] == self.num_joints, "The number of joints is not correct"
 
@@ -155,7 +170,7 @@ class DDLITLab2024Dataset(Dataset):
         return raw_joint_data
 
     def query_image_data(
-        self, recording_id: int, end_time_stamp: float, context_len: float, num_frames: int
+        self, recording_id: int, end_time_stamp: float, context_len: float, num_frames: int, resolution: int
     ) -> tuple[torch.Tensor, torch.Tensor]:
         # Get the image data
         cursor = self.db_connection.cursor()
@@ -182,6 +197,8 @@ class DDLITLab2024Dataset(Dataset):
         for stamp, data in response:
             # Deserialize the image data
             image = np.frombuffer(data, dtype=np.uint8).reshape(480, 480, 3)
+            # Resize the image
+            image = cv2.resize(image, (resolution, resolution), interpolation=cv2.INTER_AREA)
             # Make chw from hwc
             image = np.moveaxis(image, -1, 0)
             # Append to the list
@@ -191,7 +208,7 @@ class DDLITLab2024Dataset(Dataset):
         # Apply zero padding if necessary
         if len(image_data) < num_frames:
             image_data = [
-                np.zeros((3, 480, 480), dtype=np.uint8) for _ in range(num_frames - len(image_data))
+                np.zeros((3, resolution, resolution), dtype=np.uint8) for _ in range(num_frames - len(image_data))
             ] + image_data
             stamps = [end_time_stamp - context_len for _ in range(num_frames - len(stamps))] + stamps
 
@@ -244,7 +261,7 @@ class DDLITLab2024Dataset(Dataset):
             case rep:
                 raise NotImplementedError(f"Unknown IMU representation {rep}")
 
-        return torch.from_numpy(imu_data)
+        return torch.from_numpy(imu_data).float()
 
     def query_current_game_state(self, recording_id: int, stamp: float) -> torch.Tensor:
         cursor = self.db_connection.cursor()
@@ -265,7 +282,6 @@ class DDLITLab2024Dataset(Dataset):
 
         return torch.tensor(int(game_state))
 
-    @profile
     def __getitem__(self, idx: int) -> Result:
         # Find the recording that contains the sample
         for start_sample, end_sample, recording_id in self.sample_boundaries:
@@ -288,20 +304,30 @@ class DDLITLab2024Dataset(Dataset):
         stamp = sample_joint_command_index / self.sampling_rate
 
         # Get the image data
-        image_stamps, image_data = self.query_image_data(
-            recording_id,
-            stamp,
-            # The duration is used to narrow down the query for a faster retrieval, so we consider it as an upper bound
-            (self.num_frames_video + 1) / self.max_fps_video,
-            self.num_frames_video,
-        )
-        # Some sanity checks
-        assert all([stamp >= image_stamp for image_stamp in image_stamps]), "The image data is not synchronized"
-        assert len(image_stamps) == self.num_frames_video, "The image data is not the correct length"
-        assert image_data.shape == (self.num_frames_video, 3, 480, 480), "The image data has the wrong shape"
-        assert (
-            image_stamps[0] >= stamp - (self.num_frames_video + 1) / self.max_fps_video
-        ), "The image data is not synchronized"
+        if self.use_images:
+            image_stamps, image_data = self.query_image_data(
+                recording_id,
+                stamp,
+                # The duration is used to narrow down the query for a faster retrieval,
+                # so we consider it as an upper bound
+                (self.num_frames_video + 1) / self.max_fps_video,
+                self.num_frames_video,
+                self.image_resolution,
+            )
+            # Some sanity checks
+            assert all([stamp >= image_stamp for image_stamp in image_stamps]), "The image data is not synchronized"
+            assert len(image_stamps) == self.num_frames_video, "The image data is not the correct length"
+            assert image_data.shape == (
+                self.num_frames_video,
+                3,
+                self.image_resolution,
+                self.image_resolution,
+            ), "The image data has the wrong shape"
+            assert (
+                image_stamps[0] >= stamp - (self.num_frames_video + 1) / self.max_fps_video
+            ), "The image data is not synchronized"
+        else:
+            image_stamps, image_data = None, None
 
         # Get the joint command target (future)
         joint_command = self.query_joint_data(
@@ -310,20 +336,32 @@ class DDLITLab2024Dataset(Dataset):
         assert len(joint_command) == self.num_samples_joint_trajectory_future, "The joint command has the wrong length"
 
         # Get the joint command history
-        joint_command_history = self.query_joint_data_history(
-            recording_id, sample_joint_command_index, self.num_samples_joint_trajectory, "JointCommands"
-        )
+        if self.use_action_history:
+            joint_command_history = self.query_joint_data_history(
+                recording_id, sample_joint_command_index, self.num_samples_joint_trajectory, "JointCommands"
+            )
+        else:
+            joint_command_history = None
 
         # Get the joint state
-        joint_state = self.query_joint_data_history(
-            recording_id, sample_joint_command_index, self.num_samples_joint_states, "JointStates"
-        )
+        if self.use_joint_states:
+            joint_state = self.query_joint_data_history(
+                recording_id, sample_joint_command_index, self.num_samples_joint_states, "JointStates"
+            )
+        else:
+            joint_state = None
 
         # Get the robot rotation (IMU data)
-        robot_rotation = self.query_imu_data(recording_id, sample_joint_command_index, self.num_samples_imu)
+        if self.use_imu:
+            robot_rotation = self.query_imu_data(recording_id, sample_joint_command_index, self.num_samples_imu)
+        else:
+            robot_rotation = None
 
         # Get the game state
-        game_state = self.query_current_game_state(recording_id, stamp)
+        if self.use_game_state:
+            game_state = self.query_current_game_state(recording_id, stamp)
+        else:
+            game_state = None
 
         return self.Result(
             joint_command=joint_command,
@@ -339,12 +377,14 @@ class DDLITLab2024Dataset(Dataset):
     def collate_fn(batch: Iterable[Result]) -> Result:
         return DDLITLab2024Dataset.Result(
             joint_command=torch.stack([x.joint_command for x in batch]),
-            joint_command_history=torch.stack([x.joint_command_history for x in batch]),
-            joint_state=torch.stack([x.joint_state for x in batch]),
-            image_data=torch.stack([x.image_data for x in batch]),
-            image_stamps=torch.stack([x.image_stamps for x in batch]),
-            rotation=torch.stack([x.rotation for x in batch]),
-            game_state=torch.tensor([x.game_state for x in batch]),
+            joint_command_history=torch.stack([x.joint_command_history for x in batch])
+            if batch[0].joint_command_history is not None
+            else None,
+            joint_state=torch.stack([x.joint_state for x in batch]) if batch[0].joint_state is not None else None,
+            image_data=torch.stack([x.image_data for x in batch]) if batch[0].image_data is not None else None,
+            image_stamps=torch.stack([x.image_stamps for x in batch]) if batch[0].image_stamps is not None else None,
+            rotation=torch.stack([x.rotation for x in batch]) if batch[0].rotation is not None else None,
+            game_state=torch.tensor([x.game_state for x in batch]) if batch[0].game_state is not None else None,
         )
 
 

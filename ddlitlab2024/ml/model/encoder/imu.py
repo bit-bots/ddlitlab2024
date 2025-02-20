@@ -19,6 +19,7 @@ class IMUEncoder(BaseEncoder):
     def __init__(
         self,
         orientation_embedding_method: OrientationEmbeddingMethod,
+        patch_size: int,
         hidden_dim: int,
         num_layers: int,
         num_heads: int,
@@ -28,6 +29,7 @@ class IMUEncoder(BaseEncoder):
         Initializes the module.
 
         :param orientation_embedding_method: The method used to embed the orientation data.
+        :param patch_size: The size of the patches for the convolutional embedding.
         :param hidden_dim: The number of hidden dimensions.
         :param num_layers: The number of transformer layers.
         :param num_heads: The number of attention heads.
@@ -43,6 +45,7 @@ class IMUEncoder(BaseEncoder):
 
         super().__init__(
             input_dim=input_features,
+            patch_size=patch_size,
             hidden_dim=hidden_dim,
             num_layers=num_layers,
             num_heads=num_heads,

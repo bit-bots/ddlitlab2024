@@ -11,8 +11,8 @@ DEFAULT_IMG_SIZE = (480, 480)
 
 
 class RobotState(str, Enum):
-    POSITIONING = "POSITIONING"
     PLAYING = "PLAYING"
+    POSITIONING = "POSITIONING"
     STOPPED = "STOPPED"
     UNKNOWN = "UNKNOWN"
 
@@ -214,7 +214,8 @@ class JointStates(Base):
         Index(None, "recording_id", asc("stamp")),
     )
 
-    def get_ordered_joint_names(self) -> list[str]:
+    @staticmethod
+    def get_ordered_joint_names() -> list[str]:
         return [
             JointStates.head_pan.name,
             JointStates.head_tilt.name,

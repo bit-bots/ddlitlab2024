@@ -8,7 +8,8 @@ from ddlitlab2024.dataset.errors import CLIArgumentError
 
 
 class ImportType(str, Enum):
-    ROS_BAG = "rosbag"
+    BIT_BOTS = "bit-bots"
+    B_HUMAN = "b-human"
 
 
 class CLICommand(str, Enum):
@@ -71,6 +72,9 @@ class CLIArgs:
         self.import_parser = subparsers.add_parser(CLICommand.IMPORT.value, help="Import data into the database")
         self.import_parser.add_argument("type", type=ImportType, help="Type of import to perform")
         self.import_parser.add_argument("file", type=Path, help="File to import")
+        self.import_parser.add_argument("location", type=str, help="Location of the data")
+        self.import_parser.add_argument("--caching", action="store_true", help="Enable file caching")
+        self.import_parser.add_argument("--video", action="store_true", help="Show video while importing")
 
     def parse_args(self) -> Namespace:
         return self.validate_args(self.parser.parse_args())
@@ -87,7 +91,7 @@ class CLIArgs:
         if not args.file.exists():
             raise CLIArgumentError(f"File does not exist: {args.file}")
 
-        if args.type == ImportType.ROS_BAG and not args.file.suffix == ".mcap":
+        if args.type == ImportType.BIT_BOTS and not args.file.suffix == ".mcap":
             raise CLIArgumentError(f"Rosbag import file not '*.mcap': {args.file}")
 
     def db_validation(self, args):

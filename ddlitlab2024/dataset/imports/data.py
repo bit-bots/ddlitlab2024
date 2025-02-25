@@ -28,6 +28,7 @@ class ImportMetadata:
 @dataclass
 class InputData:
     image: Any = None
+    lower_image: Any = None
     game_state: Any = None
     joint_state: Any = None
     rotation: Any = None

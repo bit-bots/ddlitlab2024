@@ -208,3 +208,6 @@ ENV/
 
 # Torch models
 *.pth
+
+# Input data
+input/

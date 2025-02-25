@@ -1,22 +1,32 @@
 {
   "cSpell.words": [
     "bigendian",
+    "dateutil",
     "ddlitlab",
     "dtype",
+    "dtypes",
+    "frombuffer",
+    "ignoretz",
     "mcap",
     "nanosec",
     "ndarray",
     "ndim",
     "nullable",
+    "ollama",
+    "pybh",
     "rclpy",
+    "resampler",
+    "Resampler",
     "rosbag",
     "sessionmaker",
     "sqlalchemy",
     "sqlite",
-    "tobytes"
+    "tobytes",
+    "yuyv"
   ],
   "python.analysis.typeCheckingMode": "basic",
   "python.testing.pytestArgs": ["tests"],
   "python.testing.unittestEnabled": false,
-  "python.testing.pytestEnabled": true
+  "python.testing.pytestEnabled": true,
+  "ros.distro": "iron"
 }

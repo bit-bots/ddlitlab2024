@@ -40,6 +40,8 @@ ruff = "^0.8.0"
 pytest = "^8.3.3"
 lark = "^1.2.2"
 
+[tool.poetry.group.b_human.dependencies]
+pybh = {git = "https://github.com/bhuman/BHumanCodeRelease.git", rev = "master", subdirectory = "Make/Python"}
 
 [tool.ruff]
 fix = true
